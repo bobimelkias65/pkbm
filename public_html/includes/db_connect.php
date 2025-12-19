@@ -1,47 +1,26 @@
 <?php
-/**
- * Konfigurasi Database
- * Sesuaikan dengan settingan server lokal/hosting Anda
- */
-$host = 'localhost';     // Host database (biasanya localhost)
-$user = 'u347230510_pkbm';          // Username database (default XAMPP: root)
-$pass = 'Pkbmharapankasih1';              // Password database (default XAMPP: kosong)
-$db   = 'u347230510_pkbm'; // Nama database sesuai file SQL
-
-// Membuat koneksi
-$conn = new mysqli($host, $user, $pass, $db);
-
-// Cek koneksi
-if ($conn->connect_error) {
-    die("Koneksi Database Gagal: " . $conn->connect_error);
+// Mencegah akses langsung ke file ini
+if (basename($_SERVER['PHP_SELF']) === basename(__FILE__)) {
+    die('Akses langsung tidak diizinkan.');
 }
 
-// Set charset ke UTF-8 agar karakter khusus aman
-$conn->set_charset("utf8mb4");
+$host = "localhost";
+$user = "root"; // Sesuaikan dengan user database hosting Anda
+$pass = "";     // Sesuaikan dengan password database hosting Anda
+$db   = "pkbm_db"; // Sesuaikan dengan nama database Anda
 
-/**
- * Helper Function: Mengambil Setting Situs
- * Mengambil value dari tabel site_settings berdasarkan key
- */
-function get_setting($key) {
-    global $conn;
-    $sql = "SELECT setting_value FROM site_settings WHERE setting_key = ? LIMIT 1";
+// Mengaktifkan pelaporan error yang ketat untuk debugging (matikan saat live/production)
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+try {
+    $conn = new mysqli($host, $user, $pass, $db);
     
-    // Menggunakan Prepared Statement untuk keamanan
-    $stmt = $conn->prepare($sql);
-    
-    if ($stmt) {
-        $stmt->bind_param("s", $key);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows > 0) {
-            $row = $result->fetch_object();
-            return $row->setting_value;
-        }
-        $stmt->close();
-    }
-    
-    return ""; // Return kosong jika tidak ditemukan
+    // Set charset ke utf8mb4 untuk mendukung simbol dan emoji
+    $conn->set_charset("utf8mb4");
+
+} catch (mysqli_sql_exception $e) {
+    // Jika gagal, jangan tampilkan error detail ke user, cukup log saja
+    error_log($e->getMessage());
+    die("Koneksi ke database gagal. Silakan coba lagi nanti.");
 }
 ?>

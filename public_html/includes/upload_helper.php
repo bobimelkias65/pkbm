@@ -1,84 +1,78 @@
 <?php
 /**
- * Helper Keamanan untuk Upload File
- * =================================
- * Fungsi ini digunakan untuk menggantikan move_uploaded_file() standar.
- * Mencegah serangan Shell Upload, Double Extension, dan Null Byte.
- * * Cara Pakai di Admin:
- * require_once '../includes/upload_helper.php';
- * try {
- * $nama_file = uploadImageSecure($_FILES['gambar_kursus'], '../assets/uploads/');
- * // Simpan $nama_file ke database
- * } catch (Exception $e) {
- * echo "Error: " . $e->getMessage();
- * }
+ * Helper Keamanan & Optimasi Upload File
+ * ======================================
+ * Fitur:
+ * 1. Validasi Keamanan (MIME Type & Ekstensi).
+ * 2. Rename File (Hash Acak).
+ * 3. [BARU] Otomatis Convert ke WebP untuk performa lebih cepat.
+ * 4. [BARU] Kompresi Kualitas (80%).
  */
 
 function uploadImageSecure($fileInput, $targetDir = '../assets/uploads/') {
-    // 1. Cek Error Upload dari PHP
+    // 1. Cek Error Upload
     if ($fileInput['error'] !== UPLOAD_ERR_OK) {
-        switch ($fileInput['error']) {
-            case UPLOAD_ERR_INI_SIZE:
-                throw new Exception("Ukuran file melebihi batas server (upload_max_filesize).");
-            case UPLOAD_ERR_FORM_SIZE:
-                throw new Exception("Ukuran file melebihi batas form (MAX_FILE_SIZE).");
-            case UPLOAD_ERR_PARTIAL:
-                throw new Exception("File hanya terupload sebagian.");
-            case UPLOAD_ERR_NO_FILE:
-                throw new Exception("Tidak ada file yang diupload.");
-            default:
-                throw new Exception("Terjadi error sistem saat upload.");
-        }
+        throw new Exception("Error upload kode: " . $fileInput['error']);
     }
 
-    // 2. Validasi Ukuran File (Contoh: Maks 2MB)
-    $maxSize = 2 * 1024 * 1024; // 2MB dalam bytes
+    // 2. Validasi Ukuran (Max 5MB karena akan dikompres)
+    $maxSize = 5 * 1024 * 1024; 
     if ($fileInput['size'] > $maxSize) {
-        throw new Exception("Ukuran file terlalu besar. Maksimal 2MB.");
+        throw new Exception("Ukuran file terlalu besar. Maksimal 5MB.");
     }
 
-    // 3. Validasi Tipe File (MIME Type & Ekstensi)
-    // Whitelist ekstensi yang aman
-    $allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-    // Whitelist MIME type yang aman
-    $allowedMimes = [
-        'image/jpeg', 
-        'image/png', 
-        'image/gif', 
-        'image/webp'
-    ];
-
-    // Cek MIME Type Asli menggunakan FileInfo (Lebih aman dari $_FILES['type'])
+    // 3. Validasi Tipe File (MIME Type)
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($fileInput['tmp_name']);
-
+    
+    $allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    
     if (!in_array($mime, $allowedMimes)) {
-        throw new Exception("Format file tidak valid. Terdeteksi: " . $mime);
+        throw new Exception("Format file tidak valid. Hanya JPG, PNG, GIF, dan WebP.");
     }
 
-    // Cek Ekstensi File
-    $ext = strtolower(pathinfo($fileInput['name'], PATHINFO_EXTENSION));
-    if (!in_array($ext, $allowedExts)) {
-        throw new Exception("Ekstensi file tidak diizinkan.");
-    }
-
-    // 4. Sanitasi & Rename File (Sangat Penting!)
-    // Jangan gunakan nama asli user. Gunakan hash unik.
-    // Contoh output: img_64a7b189c.png
-    $newFileName = 'img_' . bin2hex(random_bytes(8)) . '.' . $ext;
+    // 4. Siapkan Nama File Baru (Ekstensi dipaksa jadi .webp)
+    $newFileName = 'img_' . bin2hex(random_bytes(8)) . '.webp';
     $targetFile = $targetDir . $newFileName;
 
-    // 5. Pastikan folder tujuan ada
+    // Buat folder jika belum ada
     if (!is_dir($targetDir)) {
-        // Buat folder jika belum ada (permission 0755)
         mkdir($targetDir, 0755, true);
     }
 
-    // 6. Pindahkan File
-    if (move_uploaded_file($fileInput['tmp_name'], $targetFile)) {
-        return $newFileName; // Kembalikan nama file baru untuk disimpan di DB
+    // 5. PROSES KONVERSI KE WEBP (GD Library)
+    $tmpName = $fileInput['tmp_name'];
+    $image = null;
+
+    switch ($mime) {
+        case 'image/jpeg':
+            $image = imagecreatefromjpeg($tmpName);
+            break;
+        case 'image/png':
+            $image = imagecreatefrompng($tmpName);
+            // Handle Transparansi PNG
+            imagepalettetotruecolor($image);
+            imagealphablending($image, true);
+            imagesavealpha($image, true);
+            break;
+        case 'image/gif':
+            $image = imagecreatefromgif($tmpName);
+            break;
+        case 'image/webp':
+            $image = imagecreatefromwebp($tmpName);
+            break;
+    }
+
+    if ($image) {
+        // Simpan sebagai WebP dengan Kualitas 80% (Keseimbangan terbaik size vs kualitas)
+        if (imagewebp($image, $targetFile, 80)) {
+            imagedestroy($image); // Bersihkan memori
+            return $newFileName;
+        } else {
+            throw new Exception("Gagal mengkonversi gambar ke WebP.");
+        }
     } else {
-        throw new Exception("Gagal memindahkan file ke folder tujuan. Cek permission folder.");
+        throw new Exception("Gagal memproses gambar. Pastikan library GD aktif di server.");
     }
 }
 ?>

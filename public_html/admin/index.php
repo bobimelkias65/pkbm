@@ -2,156 +2,219 @@
 session_start();
 require_once '../includes/db_connect.php';
 
-// Cek apakah user sudah login
-if (!isset($_SESSION['user_id'])) {
+// 1. CEK LOGIN (Security Guard)
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     header("Location: login.php");
-    exit;
+    exit();
 }
 
-// Mengambil Statistik Ringkas
-$count_programs = $conn->query("SELECT COUNT(*) as total FROM programs")->fetch_assoc()['total'];
-$count_gallery  = $conn->query("SELECT COUNT(*) as total FROM gallery")->fetch_assoc()['total'];
-$count_inbox    = $conn->query("SELECT COUNT(*) as total FROM inquiries")->fetch_assoc()['total'];
+// 2. FITUR SESSION TIMEOUT (Keamanan & UX)
+// Jika tidak ada aktivitas selama 30 menit (1800 detik), otomatis logout
+$timeout_duration = 1800; 
 
-// Membuat variabel global agar bisa dibaca oleh sidebar.php
-$GLOBALS['count_inbox'] = $count_inbox;
+if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > $timeout_duration) {
+    session_unset();
+    session_destroy();
+    // Redirect ke login dengan pesan timeout
+    header("Location: login.php?msg=timeout");
+    exit();
+}
 
-// Statistik Baru: Siswa & Kursus (Gunakan try-catch agar tidak error jika tabel belum dibuat)
-$count_students = 0;
-$count_courses = 0;
-try {
-    $res_stu = $conn->query("SELECT COUNT(*) as total FROM students");
-    if($res_stu) $count_students = $res_stu->fetch_assoc()['total'];
-    
-    $res_cour = $conn->query("SELECT COUNT(*) as total FROM courses");
-    if($res_cour) $count_courses = $res_cour->fetch_assoc()['total'];
-} catch (Exception $e) { /* Ignore if table not exists */ }
+// Update waktu aktivitas terakhir setiap kali halaman di-refresh
+$_SESSION['last_activity'] = time();
+
+// 3. LOGIKA DASHBOARD (Mengambil Statistik Data)
+$stats = [
+    'students' => 0,
+    'courses' => 0,
+    'gallery' => 0,
+    'inquiries' => 0
+];
+
+// Hitung Total Siswa
+$query = $conn->query("SELECT COUNT(*) as total FROM students");
+if ($query) $stats['students'] = $query->fetch_assoc()['total'];
+
+// Hitung Total Kursus
+$query = $conn->query("SELECT COUNT(*) as total FROM courses");
+if ($query) $stats['courses'] = $query->fetch_assoc()['total'];
+
+// Hitung Total Galeri
+$query = $conn->query("SELECT COUNT(*) as total FROM gallery");
+if ($query) $stats['gallery'] = $query->fetch_assoc()['total'];
+
+// Hitung Pesan Masuk (Cek dulu jika tabel inquiries ada)
+$check_table = $conn->query("SHOW TABLES LIKE 'inquiries'");
+if ($check_table && $check_table->num_rows > 0) {
+    $q_inq = $conn->query("SELECT COUNT(*) as total FROM inquiries");
+    if ($q_inq) $stats['inquiries'] = $q_inq->fetch_assoc()['total'];
+}
+
+// 4. DATA PENDAFTAR TERBARU (Limit 5)
+// Menampilkan 5 pendaftar terakhir untuk monitoring cepat
+$latest_students = $conn->query("SELECT * FROM students ORDER BY tanggal_daftar DESC LIMIT 5");
 
 ?>
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - PKBM Harapan Kasih</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>body { font-family: 'Plus Jakarta Sans', sans-serif; }</style>
+    <title>Dashboard Admin - PKBM</title>
+    <link rel="stylesheet" href="../assets/css/style.css">
+    <!-- Font Awesome untuk Ikon (Opsional, gunakan CDN) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <style>
+        .admin-container { display: flex; min-height: 100vh; background-color: #f4f6f9; }
+        .main-content { flex: 1; padding: 30px; }
+        
+        /* Kartu Statistik */
+        .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px; 
+        }
+        .stat-card { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between;
+            transition: transform 0.2s;
+        }
+        .stat-card:hover { transform: translateY(-5px); }
+        .stat-info h3 { margin: 0; font-size: 28px; color: #2c3e50; }
+        .stat-info p { margin: 5px 0 0; color: #7f8c8d; font-size: 14px; }
+        .stat-icon { 
+            font-size: 40px; 
+            opacity: 0.2; 
+        }
+        
+        /* Warna Ikon per Kategori */
+        .icon-blue { color: #3498db; }
+        .icon-green { color: #2ecc71; }
+        .icon-orange { color: #e67e22; }
+        .icon-purple { color: #9b59b6; }
+
+        /* Tabel Terbaru */
+        .recent-section { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .recent-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .recent-header h3 { margin: 0; color: #2c3e50; }
+        .btn-sm { font-size: 12px; padding: 5px 10px; background: #34495e; color: white; text-decoration: none; border-radius: 4px; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        table th, table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        table th { background-color: #f8f9fa; color: #666; font-weight: 600; }
+        .status-badge { 
+            padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; background: #d4edda; color: #155724; 
+        }
+    </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
+<body>
 
-    <div class="flex min-h-screen">
-        <!-- Memanggil Sidebar dari file terpisah -->
-        <?php include 'sidebar.php'; ?>
+<div class="admin-container">
+    <!-- Sidebar Include -->
+    <?php include 'sidebar.php'; ?>
 
-        <!-- Main Content -->
-        <main class="flex-1 md:ml-64 p-8">
-            <!-- Header Mobile -->
-            <div class="md:hidden mb-8 flex justify-between items-center">
-                <h1 class="text-2xl font-bold">Dashboard</h1>
-                <a href="logout.php" class="text-red-500"><i class="fas fa-sign-out-alt text-xl"></i></a>
-            </div>
+    <div class="main-content">
+        <div style="margin-bottom: 25px;">
+            <h2 style="margin-bottom: 5px;">Selamat Datang, <?php echo htmlspecialchars($_SESSION['username'] ?? 'Admin'); ?>!</h2>
+            <p style="color: #666;">Berikut adalah ringkasan aktivitas di PKBM Anda hari ini.</p>
+        </div>
 
-            <!-- Welcome Banner -->
-            <div class="bg-white rounded-2xl p-8 shadow-sm border border-slate-200 mb-8 flex flex-col-reverse md:flex-row justify-between items-center gap-6">
-                
-                <!-- Teks Sambutan -->
-                <div class="text-center md:text-left">
-                    <h1 class="text-2xl font-bold text-slate-800 mb-2">
-                        Selamat Datang, <a href="profile.php" class="text-sky-600 hover:underline"><?= htmlspecialchars($_SESSION['nama_lengkap']) ?></a>! 👋
-                    </h1>
-                    <p class="text-slate-500">Ini adalah panel kontrol utama untuk mengelola konten website PKBM Harapan Kasih.</p>
+        <!-- Statistik Dashboard -->
+        <div class="stats-grid">
+            <!-- Card 1: Siswa -->
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3><?php echo $stats['students']; ?></h3>
+                    <p>Total Siswa</p>
                 </div>
-
-                <!-- Gambar Profil -->
-                <a href="profile.php" class="flex-shrink-0 group relative" title="Ke Profil Saya">
-                    <div class="w-20 h-20 rounded-full p-1 border-2 border-sky-100 group-hover:border-sky-300 transition-all duration-300">
-                        <img src="https://ui-avatars.com/api/?name=<?= urlencode($_SESSION['nama_lengkap']) ?>&background=0ea5e9&color=fff&size=128&bold=true" 
-                             alt="Profil" 
-                             class="w-full h-full rounded-full object-cover shadow-sm group-hover:shadow-md transition">
-                    </div>
-                    <div class="absolute bottom-0 right-0 bg-white text-slate-600 rounded-full w-7 h-7 flex items-center justify-center shadow-md border border-slate-100 group-hover:bg-sky-600 group-hover:text-white transition">
-                        <i class="fas fa-pen text-xs"></i>
-                    </div>
-                </a>
-            </div>
-
-            <!-- Stats Grid -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <!-- Card Siswa -->
-                <a href="students.php" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition group">
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="text-slate-500 font-medium">Data Siswa</div>
-                        <div class="w-10 h-10 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center group-hover:scale-110 transition">
-                            <i class="fas fa-user-graduate"></i>
-                        </div>
-                    </div>
-                    <div class="text-3xl font-bold text-slate-800"><?= $count_students ?></div>
-                    <p class="text-xs text-slate-400 mt-2">Paket A, B, & C</p>
-                </a>
-
-                <!-- Card Kursus -->
-                <a href="courses.php" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition group">
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="text-slate-500 font-medium">Kursus</div>
-                        <div class="w-10 h-10 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center group-hover:scale-110 transition">
-                            <i class="fas fa-chalkboard-teacher"></i>
-                        </div>
-                    </div>
-                    <div class="text-3xl font-bold text-slate-800"><?= $count_courses ?></div>
-                    <p class="text-xs text-slate-400 mt-2">Kelas Keterampilan</p>
-                </a>
-
-                <!-- Card Gallery -->
-                <a href="gallery.php" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition group">
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="text-slate-500 font-medium">Galeri Foto</div>
-                        <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center group-hover:scale-110 transition">
-                            <i class="fas fa-images"></i>
-                        </div>
-                    </div>
-                    <div class="text-3xl font-bold text-slate-800"><?= $count_gallery ?></div>
-                    <p class="text-xs text-slate-400 mt-2">Dokumentasi</p>
-                </a>
-
-                <!-- Card Inbox -->
-                <a href="inquiries.php" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition group">
-                    <div class="flex items-center justify-between mb-4">
-                        <div class="text-slate-500 font-medium">Pesan Masuk</div>
-                        <div class="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center group-hover:scale-110 transition">
-                            <i class="fas fa-inbox"></i>
-                        </div>
-                    </div>
-                    <div class="text-3xl font-bold text-slate-800"><?= $count_inbox ?></div>
-                    <p class="text-xs text-slate-400 mt-2">Pendaftaran Baru</p>
-                </a>
-            </div>
-
-            <!-- Quick Info Website -->
-            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-                    <h3 class="font-bold text-slate-800">Informasi Website</h3>
-                    <a href="../" target="_blank" class="text-sm text-sky-600 hover:underline">Lihat Website <i class="fas fa-external-link-alt ml-1"></i></a>
-                </div>
-                <div class="p-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Nama Situs</label>
-                            <p class="font-medium text-slate-800"><?= get_setting('site_name') ?></p>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Tagline</label>
-                            <p class="font-medium text-slate-800"><?= get_setting('site_tagline') ?></p>
-                        </div>
-                        <div class="md:col-span-2 pt-2">
-                             <a href="settings.php" class="text-sm font-bold text-sky-600 hover:text-sky-800">Ubah Informasi <i class="fas fa-arrow-right ml-1"></i></a>
-                        </div>
-                    </div>
+                <div class="stat-icon icon-blue">
+                    <i class="fas fa-users"></i>
                 </div>
             </div>
-        </main>
+
+            <!-- Card 2: Kursus -->
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3><?php echo $stats['courses']; ?></h3>
+                    <p>Program Kursus</p>
+                </div>
+                <div class="stat-icon icon-green">
+                    <i class="fas fa-book"></i>
+                </div>
+            </div>
+
+            <!-- Card 3: Galeri -->
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3><?php echo $stats['gallery']; ?></h3>
+                    <p>Foto Kegiatan</p>
+                </div>
+                <div class="stat-icon icon-orange">
+                    <i class="fas fa-images"></i>
+                </div>
+            </div>
+
+            <!-- Card 4: Pesan (Opsional) -->
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3><?php echo $stats['inquiries']; ?></h3>
+                    <p>Pesan Masuk</p>
+                </div>
+                <div class="stat-icon icon-purple">
+                    <i class="fas fa-envelope"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabel Pendaftar Terbaru -->
+        <div class="recent-section">
+            <div class="recent-header">
+                <h3>Pendaftar Terbaru</h3>
+                <a href="students.php" class="btn-sm">Lihat Semua</a>
+            </div>
+
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nama Lengkap</th>
+                            <th>Email</th>
+                            <th>No. HP</th>
+                            <th>Tanggal Daftar</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if ($latest_students && $latest_students->num_rows > 0): ?>
+                            <?php while($row = $latest_students->fetch_assoc()): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($row['nama']); ?></td>
+                                <td><?php echo htmlspecialchars($row['email']); ?></td>
+                                <td><?php echo htmlspecialchars($row['no_hp']); ?></td>
+                                <td><?php echo date('d M Y, H:i', strtotime($row['tanggal_daftar'])); ?></td>
+                                <td><span class="status-badge">Baru</span></td>
+                            </tr>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="5" style="text-align:center; padding: 20px;">Belum ada data pendaftar.</td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
     </div>
+</div>
 
 </body>
 </html>

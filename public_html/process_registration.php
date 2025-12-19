@@ -1,52 +1,57 @@
 <?php
-// Pastikan file koneksi database tersedia
 require_once 'includes/db_connect.php';
 
-// Cek apakah form dikirim menggunakan metode POST
+// Cek apakah request datang dari metode POST
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
-    // 1. Ambil dan Bersihkan Data Input (Sanitasi)
-    // htmlspecialchars digunakan untuk mencegah serangan XSS
-    $name             = isset($_POST['name']) ? htmlspecialchars(trim($_POST['name'])) : '';
-    $whatsapp         = isset($_POST['whatsapp']) ? htmlspecialchars(trim($_POST['whatsapp'])) : '';
-    $program_interest = isset($_POST['program_interest']) ? htmlspecialchars(trim($_POST['program_interest'])) : '';
-    $message          = isset($_POST['message']) ? htmlspecialchars(trim($_POST['message'])) : '';
+    // Ambil data dan bersihkan spasi
+    $nama_lengkap = trim($_POST['nama_lengkap']);
+    $email        = trim($_POST['email']);
+    $no_hp        = trim($_POST['no_hp']);
+    $program_id   = trim($_POST['program_id']); // Asumsi form mengirim ID program
+    $pesan        = trim($_POST['pesan']);
 
-    // 2. Validasi Sederhana
-    if (empty($name) || empty($whatsapp) || empty($program_interest)) {
-        // Jika ada field wajib yang kosong, kembalikan dengan pesan error
-        header("Location: index.php?status=error&msg=Mohon lengkapi Nama, WhatsApp, dan Pilihan Program.#kontak");
-        exit();
+    // Validasi Sederhana
+    if (empty($nama_lengkap) || empty($no_hp) || empty($program_id)) {
+        die("Nama, Nomor HP, dan Pilihan Program wajib diisi.");
     }
 
-    // 3. Simpan ke Database
-    // Menggunakan Prepared Statement untuk keamanan (mencegah SQL Injection)
-    $sql = "INSERT INTO inquiries (name, whatsapp, program_interest, message, status) VALUES (?, ?, ?, ?, 'new')";
-    
-    if ($stmt = $conn->prepare($sql)) {
-        // Bind parameter: "ssss" artinya 4 parameter bertipe string
-        $stmt->bind_param("ssss", $name, $whatsapp, $program_interest, $message);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        die("Format email tidak valid.");
+    }
 
+    // 1. SIAPKAN QUERY (PREPARED STATEMENT)
+    // Asumsi nama tabel adalah 'pendaftaran' atau 'students'
+    // Sesuaikan nama tabel dan kolom dengan database Anda
+    $sql = "INSERT INTO students (nama, email, no_hp, program_id, pesan, tanggal_daftar) VALUES (?, ?, ?, ?, ?, NOW())";
+
+    if ($stmt = $conn->prepare($sql)) {
+        // 2. BIND PARAMETER
+        // "sssis" artinya: String, String, String, Integer, String
+        $stmt->bind_param("sssis", $nama_lengkap, $email, $no_hp, $program_id, $pesan);
+
+        // 3. EKSEKUSI
         if ($stmt->execute()) {
-            // Jika berhasil disimpan
-            header("Location: index.php?status=success#kontak");
-            exit();
+            // Sukses
+            // Redirect ke halaman sukses atau tampilkan pesan
+            echo "<script>
+                    alert('Pendaftaran berhasil! Kami akan segera menghubungi Anda.');
+                    window.location.href = 'index.php';
+                  </script>";
         } else {
-            // Jika eksekusi query gagal
-            header("Location: index.php?status=error&msg=Terjadi kesalahan sistem. Silakan coba lagi.#kontak");
-            exit();
+            // Gagal eksekusi query
+            echo "Terjadi kesalahan: " . $stmt->error;
         }
         $stmt->close();
     } else {
-        // Jika prepare statement gagal
-        header("Location: index.php?status=error&msg=Gagal terhubung ke database.#kontak");
-        exit();
+        // Gagal prepare statement
+        echo "Terjadi kesalahan sistem database.";
     }
     
     $conn->close();
 
 } else {
-    // Jika file ini diakses langsung tanpa submit form, lempar kembali ke index
+    // Jika file diakses langsung tanpa submit form
     header("Location: index.php");
     exit();
 }
